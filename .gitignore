@@ -1,0 +1,10 @@
+.DS_Store
+*.meta
+ProjectSettings
+Library
+Logs
+Packages
+UserSettings
+Assets/_Heathen Engineering
+Assets/TextMesh Pro
+
