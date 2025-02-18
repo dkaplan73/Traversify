@@ -1,130 +1,108 @@
-// File: Assets/Scripts/RPGMapTool/Tools/MagicWandTool.cs
-// GameObject Parent: PaintManagerObject (under RPGMapTool)
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using RPGMapTool.Core;
-using RPGMapTool.Utilities;
 using RPGMapTool.Enums;
 using RPGMapTool.Managers;
 
-namespace RPGMapTool.Managers
+namespace RPGMapTool.Tools
 {
     public class MagicWandTool : MonoBehaviour
     {
-        [SerializeField] private GameObject baseMap;
+        [Header("Magic Wand Settings")]
         [SerializeField] private float colorThreshold = 0.1f;
-        [SerializeField] private int minRegionSize = 10;
+        [SerializeField] private float borderColorThreshold = 0.1f;
+        [SerializeField] private Color borderColor = Color.black;
         [SerializeField] private Color fillColor = Color.red;
-        [Tooltip("Target layer to paint: Traversable or NonTraversable.")]
+        [Tooltip("Target annotation layer.")]
         [SerializeField] private AnnotationLayer targetLayer = AnnotationLayer.Traversable;
 
-        // New parameters for border tolerance.
-        [SerializeField] private float borderThreshold = 0.1f;
-        [SerializeField] private Color borderColor = Color.black;
+        [Header("References")]
+        [SerializeField] private PaintManager paintManager;
+        [SerializeField] private RawImage baseMapImage;
 
-        /// <summary>
-        /// Executes the magic wand flood fill from the provided screen position.
-        /// Picks the color beneath the click from the base map and paints the region
-        /// while respecting the pixel tolerance and border color settings.
-        /// </summary>
-        public void ExecuteMagicWand(Vector2 screenPos, PaintManager paintManager)
+        private void Awake()
         {
-            // Ensure base map reference is valid.
-            if (baseMap == null)
-            {
-                RawImage bm = paintManager.GetBaseMap();
-                if (bm != null)
-                    baseMap = bm.gameObject;
-                else
-                {
-                    Debug.LogError("MagicWandTool: Base map not found in PaintManager.");
-                    return;
-                }
-            }
+            if (paintManager == null)
+                paintManager = FindObjectOfType<PaintManager>();
+            if (baseMapImage == null && paintManager != null)
+                baseMapImage = paintManager.GetBaseMap();
+            if (baseMapImage == null)
+                Debug.LogError("MagicWandTool: Base map image not assigned or found.");
+        }
 
-            // Delay fill if UI interaction is active.
+        public void UseMagicWand(Vector2 screenPosition)
+        {
+            if (paintManager == null || baseMapImage == null)
+                return;
             if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
             {
-                Debug.LogWarning("MagicWandTool: UI interaction detected; delaying fill.");
-                StartCoroutine(RetryMagicWand(screenPos, paintManager));
+                Debug.LogWarning("MagicWandTool: UI interaction detected; aborting fill.");
                 return;
             }
-
-            if (!ValidateBaseMap())
-                return;
-
-            RawImage baseRaw = baseMap.GetComponent<RawImage>();
-            RectTransform rt = baseRaw.rectTransform;
-            if (!RectTransformUtility.RectangleContainsScreenPoint(rt, screenPos))
+            RectTransform rt = baseMapImage.rectTransform;
+            if (!RectTransformUtility.RectangleContainsScreenPoint(rt, screenPosition))
             {
                 Debug.LogWarning("MagicWandTool: Click outside base map bounds.");
                 return;
             }
-
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, screenPos, null, out Vector2 localPoint))
+            Vector2 localPoint;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, screenPosition, null, out localPoint))
             {
                 Debug.LogError("MagicWandTool: Could not convert screen point.");
                 return;
             }
-
-            Texture2D baseTex = baseRaw.texture as Texture2D;
+            Texture2D baseTex = baseMapImage.texture as Texture2D;
             if (baseTex == null)
             {
                 Debug.LogError("MagicWandTool: Base texture is not a Texture2D.");
                 return;
             }
-
-            // Pick the target color from the pixel beneath the click.
+            // Convert local point to texture coordinates.
             Vector2Int texPos = ScreenPointToTextureCoords(localPoint, rt, baseTex);
             Color targetColor = baseTex.GetPixel(texPos.x, texPos.y);
+            Debug.Log($"MagicWandTool: Picked color {targetColor} at texture coordinates {texPos}");
 
-            // Perform flood fill while avoiding pixels that are similar to the defined border color.
-            bool[,] blocked = TextureUtils.GetBlockedMask(baseTex);
+            // Get a blocked mask (implement in your utilities if needed; otherwise assume none).
+            bool[,] blocked = new bool[baseTex.width, baseTex.height];
             List<Vector2Int> region = FloodFill(baseTex, texPos.x, texPos.y, targetColor, colorThreshold, blocked);
-            if (region.Count < minRegionSize)
+            if (region.Count < 1)
             {
-                Debug.LogWarning("MagicWandTool: Region too small. Aborting fill.");
+                Debug.LogWarning("MagicWandTool: No region found.");
                 return;
             }
+            // Remove border pixels that are similar to the border color.
+            region.RemoveAll(p => ColorsSimilar(baseTex.GetPixel(p.x, p.y), borderColor, borderColorThreshold));
 
-            // Paint on the correct layer using the appropriate fill color.
+            // Fill the region.
             PaintOnMap painter = paintManager.GetComponent<PaintOnMap>();
             if (painter != null)
                 painter.ApplyPaintRegion(region, fillColor, targetLayer);
             else
                 Debug.LogError("MagicWandTool: PaintOnMap component not found.");
-
             Debug.Log($"MagicWandTool: Filled region with {region.Count} pixels.");
         }
 
-        private IEnumerator RetryMagicWand(Vector2 screenPos, PaintManager paintManager)
+        /// <summary>
+        /// Converts a local point from base map to texture coordinates.
+        /// </summary>
+        private Vector2Int ScreenPointToTextureCoords(Vector2 localPoint, RectTransform rt, Texture2D tex)
         {
-            float timer = 0f;
-            while (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject() && timer < 5f)
-            {
-                timer += Time.deltaTime;
-                yield return null;
-            }
-            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
-            {
-                Debug.LogWarning("MagicWandTool: UI still active; fill aborted.");
-                yield break;
-            }
-            ExecuteMagicWand(screenPos, paintManager);
+            Rect rect = rt.rect;
+            float normalizedX = (localPoint.x + rect.width * 0.5f) / rect.width;
+            float normalizedY = (localPoint.y + rect.height * 0.5f) / rect.height;
+            int x = Mathf.Clamp((int)(normalizedX * tex.width), 0, tex.width - 1);
+            int y = Mathf.Clamp((int)(normalizedY * tex.height), 0, tex.height - 1);
+            return new Vector2Int(x, y);
         }
 
         /// <summary>
-        /// Performs a flood fill on the texture starting at (startX, startY). 
-        /// It adds pixels similar to the target color within colorThreshold and that are not similar
-        /// to the borderColor (using borderThreshold), thereby preventing fill from crossing defined borders.
+        /// Flood fills the texture starting from (startX, startY), and returns the region of similar colors.
         /// </summary>
         private List<Vector2Int> FloodFill(Texture2D tex, int startX, int startY, Color target, float tolerance, bool[,] blocked)
         {
-            int width = tex.width;
-            int height = tex.height;
+            int width = tex.width, height = tex.height;
             bool[,] visited = new bool[width, height];
             Queue<Vector2Int> queue = new Queue<Vector2Int>();
             List<Vector2Int> region = new List<Vector2Int>();
@@ -136,14 +114,12 @@ namespace RPGMapTool.Managers
             {
                 Vector2Int current = queue.Dequeue();
                 region.Add(current);
-
-                foreach (var neighbor in GetFourConnected(current, width, height))
+                foreach (Vector2Int neighbor in GetFourConnected(current, width, height))
                 {
                     if (!visited[neighbor.x, neighbor.y] && !blocked[neighbor.x, neighbor.y])
                     {
                         Color sample = tex.GetPixel(neighbor.x, neighbor.y);
-                        // Only add pixel if it matches the target color within tolerance and is not similar to the border color.
-                        if (ColorsSimilar(sample, target, tolerance) && !ColorsSimilar(sample, borderColor, borderThreshold))
+                        if (ColorsSimilar(sample, target, tolerance))
                         {
                             visited[neighbor.x, neighbor.y] = true;
                             queue.Enqueue(neighbor);
@@ -155,7 +131,7 @@ namespace RPGMapTool.Managers
         }
 
         /// <summary>
-        /// Returns 4-connected neighbors of a given pixel coordinate.
+        /// Returns neighbors using four-connected rule.
         /// </summary>
         private IEnumerable<Vector2Int> GetFourConnected(Vector2Int coord, int width, int height)
         {
@@ -166,55 +142,12 @@ namespace RPGMapTool.Managers
         }
 
         /// <summary>
-        /// Converts a local point (from a RectTransform) to texture coordinates.
-        /// </summary>
-        private Vector2Int ScreenPointToTextureCoords(Vector2 localPoint, RectTransform rt, Texture2D tex)
-        {
-            Vector2 size = rt.rect.size;
-            int x = Mathf.Clamp((int)(((localPoint.x + size.x * 0.5f) / size.x) * tex.width), 0, tex.width - 1);
-            int y = Mathf.Clamp((int)(((localPoint.y + size.y * 0.5f) / size.y) * tex.height), 0, tex.height - 1);
-            return new Vector2Int(x, y);
-        }
-
-        /// <summary>
-        /// Determines if two colors are similar within a specified threshold.
+        /// Returns true if colors a and b are similar within threshold.
         /// </summary>
         private bool ColorsSimilar(Color a, Color b, float thresh)
         {
             float diff = Mathf.Abs(a.r - b.r) + Mathf.Abs(a.g - b.g) + Mathf.Abs(a.b - b.b);
             return diff <= thresh;
-        }
-
-        /// <summary>
-        /// Validates that the base map is correctly assigned.
-        /// </summary>
-        private bool ValidateBaseMap()
-        {
-            if (baseMap == null)
-            {
-                Debug.LogError("MagicWandTool: Base map is null.");
-                return false;
-            }
-            return true;
-        }
-
-        // Public setters to allow updates to thresholds and border settings from other tools or the UI.
-        public void SetThreshold(float newThreshold)
-        {
-            colorThreshold = newThreshold;
-            Debug.Log($"MagicWandTool: Color threshold set to {newThreshold}");
-        }
-
-        public void SetBorderColor(Color newColor)
-        {
-            borderColor = newColor;
-            Debug.Log($"MagicWandTool: Border color set to {newColor}");
-        }
-
-        public void SetBorderThreshold(float newThreshold)
-        {
-            borderThreshold = newThreshold;
-            Debug.Log($"MagicWandTool: Border threshold set to {newThreshold}");
         }
     }
 }

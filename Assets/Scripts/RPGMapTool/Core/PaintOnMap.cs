@@ -5,11 +5,13 @@ using RPGMapTool.Enums;
 
 namespace RPGMapTool.Core
 {
+    /// <summary>
+    /// Manages drawing overlays that exactly share the same width, height, position, and aspect ratio as the base map.
+    /// Call LoadBaseMap(newBaseMap) once the base map is fully loaded.
+    /// </summary>
     public class PaintOnMap : MonoBehaviour
     {
-        public enum ToolMode { Brush, MagicWand, Eraser, EyeDropper }
-
-        [Header("Writable Overlays")]
+        [Header("Overlays (Assign via Inspector if desired)")]
         [Tooltip("RawImage for the Traversable Draw Layer.")]
         [SerializeField] private RawImage traversableOverlay;
         [Tooltip("RawImage for the Non-Traversable Draw Layer.")]
@@ -18,186 +20,177 @@ namespace RPGMapTool.Core
         private Texture2D traversableTexture;
         private Texture2D nonTraversableTexture;
 
-        // Default texture dimensions in case a blank texture is created.
-        private const int defaultWidth = 1024;
-        private const int defaultHeight = 1024;
+        // Use base map texture resolution for the overlays.
+        private int texWidth = 1024;
+        private int texHeight = 1024;
+        // Clear color set to fully transparent.
         private readonly Color clearColor = new Color(0, 0, 0, 0);
 
-        private ToolMode currentToolMode;
-
-        private void Awake()
-        {
-            InitializeOverlay(ref traversableOverlay, ref traversableTexture, "Traversable");
-            InitializeOverlay(ref nonTraversableOverlay, ref nonTraversableTexture, "Non-Traversable");
-        }
+        private RawImage baseMap;
 
         /// <summary>
-        /// Toggles the active tool mode.
+        /// Loads the new base map and creates/resizes/repositions the overlays so they exactly match.
         /// </summary>
-        public void ToggleToolMode(ToolMode mode)
+        public void LoadBaseMap(RawImage newBaseMap)
         {
-            currentToolMode = mode;
-            Debug.Log($"PaintOnMap: Switched tool mode to {mode}");
-        }
-
-        private void InitializeOverlay(ref RawImage overlay, ref Texture2D texture, string overlayName)
-        {
-            if (overlay == null)
+            if (newBaseMap == null || newBaseMap.texture == null)
             {
-                Debug.LogError($"PaintOnMap: {overlayName} overlay not assigned.");
+                Debug.LogError("PaintOnMap: Base map or its texture is null.");
                 return;
             }
-            if (overlay.texture == null)
-            {
-                Debug.LogWarning($"PaintOnMap: {overlayName} overlay texture missing. Creating new blank texture.");
-                texture = CreateBlankTexture(defaultWidth, defaultHeight, clearColor);
-                overlay.texture = texture;
-            }
-            else
-            {
-                Texture2D src = overlay.texture as Texture2D;
-                if (src == null)
-                {
-                    Debug.LogWarning($"PaintOnMap: {overlayName} overlay texture is not a Texture2D. Creating new blank texture.");
-                    texture = CreateBlankTexture(defaultWidth, defaultHeight, clearColor);
-                    overlay.texture = texture;
-                }
-                else
-                {
-                    texture = Instantiate(src);
-                    overlay.texture = texture;
-                }
-            }
-        }
 
-        private Texture2D CreateBlankTexture(int width, int height, Color fill)
-        {
-            Texture2D newTex = new Texture2D(width, height, TextureFormat.ARGB32, false);
-            Color[] fillColors = new Color[width * height];
-            for (int i = 0; i < fillColors.Length; i++)
-                fillColors[i] = fill;
-            newTex.SetPixels(fillColors);
-            newTex.Apply();
-            return newTex;
+            baseMap = newBaseMap;
+            texWidth = baseMap.texture.width;
+            texHeight = baseMap.texture.height;
+            Debug.Log($"PaintOnMap: Base map loaded with texture size {texWidth} x {texHeight}");
+
+            // Create overlays if necessary.
+            if (traversableOverlay == null)
+                traversableOverlay = CreateOverlay("TraversableOverlay");
+            if (nonTraversableOverlay == null)
+                nonTraversableOverlay = CreateOverlay("NonTraversableOverlay");
+
+            // Ensure overlay colors are white so that the texture fill is determined by clearColor.
+            traversableOverlay.color = Color.white;
+            nonTraversableOverlay.color = Color.white;
+
+            // Initialize overlay textures (fill with clearColor).
+            InitializeOverlay(ref traversableOverlay, ref traversableTexture, "Traversable");
+            InitializeOverlay(ref nonTraversableOverlay, ref nonTraversableTexture, "Non-Traversable");
+
+            // Reparent overlays to the same parent as baseMap for a common coordinate space.
+            traversableOverlay.transform.SetParent(baseMap.transform.parent, false);
+            nonTraversableOverlay.transform.SetParent(baseMap.transform.parent, false);
+
+            // Force the overlays to exactly match the base map.
+            AlignOverlay(traversableOverlay);
+            AlignOverlay(nonTraversableOverlay);
+
+            Debug.Log("PaintOnMap: Overlays aligned to base map.");
         }
 
         /// <summary>
-        /// Applies a paint color to every pixel in the specified region.
+        /// Creates a new RawImage overlay.
+        /// </summary>
+        private RawImage CreateOverlay(string overlayName)
+        {
+            GameObject go = new GameObject(overlayName, typeof(RectTransform), typeof(RawImage));
+            // Temporarily parent to this object; reparented later.
+            go.transform.SetParent(this.transform, false);
+            return go.GetComponent<RawImage>();
+        }
+
+        /// <summary>
+        /// Initializes the overlay's texture with the base map resolution and fills it with clearColor.
+        /// </summary>
+        private void InitializeOverlay(ref RawImage overlay, ref Texture2D texture, string overlayName)
+        {
+            texture = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false);
+            texture.filterMode = FilterMode.Point;
+            Color[] pixels = new Color[texWidth * texHeight];
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = clearColor;
+            texture.SetPixels(pixels);
+            texture.Apply();
+            overlay.texture = texture;
+            Debug.Log($"PaintOnMap: Initialized {overlayName} overlay with texture {texWidth} x {texHeight}");
+        }
+
+        /// <summary>
+        /// Copies all relevant RectTransform properties from the base map so the overlay exactly aligns.
+        /// </summary>
+        private void AlignOverlay(RawImage overlay)
+        {
+            if (baseMap == null || overlay == null)
+            {
+                Debug.LogError("PaintOnMap.AlignOverlay: Base map or overlay is null.");
+                return;
+            }
+            RectTransform baseRT = baseMap.rectTransform;
+            RectTransform overlayRT = overlay.rectTransform;
+            overlayRT.anchorMin = baseRT.anchorMin;
+            overlayRT.anchorMax = baseRT.anchorMax;
+            overlayRT.pivot = baseRT.pivot;
+            overlayRT.anchoredPosition = baseRT.anchoredPosition;
+            // Use baseRT.rect.size to match actual dimensions.
+            overlayRT.sizeDelta = baseRT.rect.size;
+            overlayRT.localScale = baseRT.localScale;
+            overlayRT.localRotation = baseRT.localRotation;
+        }
+
+        /// <summary>
+        /// Paints on the specified layer using a circular brush.
+        /// The color is taken from the overlay's RawImage.
+        /// </summary>
+        public void BrushPaint(Vector2Int center, int brushSize, Color unusedColor, AnnotationLayer layer)
+        {
+            Texture2D target = GetTargetTexture(layer);
+            if (target == null)
+            {
+                Debug.LogError("PaintOnMap.BrushPaint: Target texture is null.");
+                return;
+            }
+            RawImage targetOverlay = (layer == AnnotationLayer.Traversable) ? traversableOverlay : nonTraversableOverlay;
+            Color paintColor = targetOverlay != null ? targetOverlay.color : unusedColor;
+            List<Vector2Int> region = GetCircleRegion(center, brushSize, target.width, target.height);
+            ApplyPaintRegion(region, paintColor, layer);
+        }
+
+        /// <summary>
+        /// Applies the paint color to each pixel in the region.
         /// </summary>
         public void ApplyPaintRegion(List<Vector2Int> region, Color paintColor, AnnotationLayer layer)
         {
-            Texture2D targetTexture = GetTargetTexture(layer);
-            if (targetTexture == null)
+            Texture2D target = GetTargetTexture(layer);
+            if (target == null)
             {
-                Debug.LogError("PaintOnMap: Target texture is null.");
+                Debug.LogError("PaintOnMap.ApplyPaintRegion: Target texture is null.");
                 return;
             }
-            foreach (var pos in region)
+            foreach (Vector2Int pos in region)
             {
-                if (pos.x >= 0 && pos.x < targetTexture.width && pos.y >= 0 && pos.y < targetTexture.height)
-                    targetTexture.SetPixel(pos.x, pos.y, paintColor);
-                else
-                    Debug.LogWarning($"PaintOnMap: Pixel position {pos} out of bounds on {layer} layer.");
+                if (pos.x >= 0 && pos.x < target.width && pos.y >= 0 && pos.y < target.height)
+                    target.SetPixel(pos.x, pos.y, paintColor);
             }
-            targetTexture.Apply();
-            Debug.Log($"PaintOnMap: Painted {region.Count} pixels on {layer} layer with color {paintColor}.");
+            target.Apply();
+            UpdateRawImage(layer);
         }
 
         /// <summary>
-        /// Brush tool: paints a circular region.
+        /// Erases on the target layer by filling the specified circular region with clearColor.
         /// </summary>
-        public void BrushPaint(Vector2Int center, int brushSize, Color brushColor, AnnotationLayer layer)
+        public void EraseBrush(Vector2Int center, int eraserSize, AnnotationLayer layer)
         {
-            Texture2D targetTexture = GetTargetTexture(layer);
-            if (targetTexture == null)
+            Texture2D target = GetTargetTexture(layer);
+            if (target == null)
             {
-                Debug.LogError("PaintOnMap: Cannot perform BrushPaint. Target texture is null.");
+                Debug.LogError("PaintOnMap.EraseBrush: Target texture is null.");
                 return;
             }
-            List<Vector2Int> region = GetCircleRegion(center, brushSize, targetTexture.width, targetTexture.height);
-            ApplyPaintRegion(region, brushColor, layer);
+            List<Vector2Int> region = GetCircleRegion(center, eraserSize, target.width, target.height);
+            foreach (Vector2Int pos in region)
+            {
+                if (pos.x >= 0 && pos.x < target.width && pos.y >= 0 && pos.y < target.height)
+                    target.SetPixel(pos.x, pos.y, clearColor);
+            }
+            target.Apply();
+            UpdateRawImage(layer);
         }
 
         /// <summary>
-        /// Magic wand tool: flood fills an area based on tolerance.
-        /// </summary>
-        public void MagicWandFill(Vector2Int start, Color fillColor, float tolerance, AnnotationLayer layer)
-        {
-            Texture2D targetTexture = GetTargetTexture(layer);
-            if (targetTexture == null)
-            {
-                Debug.LogError("PaintOnMap: Cannot perform MagicWandFill. Target texture is null.");
-                return;
-            }
-            if (start.x < 0 || start.x >= targetTexture.width || start.y < 0 || start.y >= targetTexture.height)
-            {
-                Debug.LogError("PaintOnMap: MagicWandFill start position out of bounds.");
-                return;
-            }
-            Color targetColor = targetTexture.GetPixel(start.x, start.y);
-            List<Vector2Int> region = FloodFill(targetTexture, start.x, start.y, targetColor, tolerance);
-            if (region.Count == 0)
-            {
-                Debug.LogWarning("PaintOnMap: MagicWandFill found no region to fill.");
-                return;
-            }
-            ApplyPaintRegion(region, fillColor, layer);
-        }
-
-        /// <summary>
-        /// Eraser tool: clears a circular region.
-        /// </summary>
-        public void EraseRegion(List<Vector2Int> region, AnnotationLayer layer)
-        {
-            ApplyPaintRegion(region, clearColor, layer);
-        }
-
-        /// <summary>
-        /// Samples a color from the specified layer at given pixel coordinates.
-        /// </summary>
-        public Color SampleColor(Vector2Int pixelPos, AnnotationLayer layer)
-        {
-            Texture2D targetTexture = GetTargetTexture(layer);
-            if (targetTexture == null)
-            {
-                Debug.LogError("PaintOnMap: Cannot sample color. Target texture is null.");
-                return Color.clear;
-            }
-            if (pixelPos.x < 0 || pixelPos.x >= targetTexture.width || pixelPos.y < 0 || pixelPos.y >= targetTexture.height)
-            {
-                Debug.LogError("PaintOnMap: SampleColor position out of bounds.");
-                return Color.clear;
-            }
-            return targetTexture.GetPixel(pixelPos.x, pixelPos.y);
-        }
-
-        private Texture2D GetTargetTexture(AnnotationLayer layer)
-        {
-            if (layer == AnnotationLayer.Traversable)
-                return traversableTexture;
-            else if (layer == AnnotationLayer.NonTraversable)
-                return nonTraversableTexture;
-            else
-            {
-                Debug.LogError("PaintOnMap: Invalid layer specified.");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Returns a list of pixel coordinates forming a circle.
+        /// Returns a list of texture coordinates forming a filled circle.
         /// </summary>
         private List<Vector2Int> GetCircleRegion(Vector2Int center, int radius, int maxWidth, int maxHeight)
         {
             List<Vector2Int> region = new List<Vector2Int>();
-            int sqrRadius = radius * radius;
-            for (int x = -radius; x <= radius; x++)
+            int rsq = radius * radius;
+            for (int dx = -radius; dx <= radius; dx++)
             {
-                for (int y = -radius; y <= radius; y++)
+                for (int dy = -radius; dy <= radius; dy++)
                 {
-                    if (x * x + y * y <= sqrRadius)
+                    if (dx * dx + dy * dy <= rsq)
                     {
-                        Vector2Int pos = new Vector2Int(center.x + x, center.y + y);
+                        Vector2Int pos = new Vector2Int(center.x + dx, center.y + dy);
                         if (pos.x >= 0 && pos.x < maxWidth && pos.y >= 0 && pos.y < maxHeight)
                             region.Add(pos);
                     }
@@ -207,56 +200,70 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Flood fill algorithm based on a tolerance.
+        /// Retrieves the texture for the given annotation layer.
         /// </summary>
-        private List<Vector2Int> FloodFill(Texture2D tex, int startX, int startY, Color targetColor, float tolerance)
+        private Texture2D GetTargetTexture(AnnotationLayer layer)
         {
-            List<Vector2Int> region = new List<Vector2Int>();
-            bool[,] visited = new bool[tex.width, tex.height];
-            Queue<Vector2Int> queue = new Queue<Vector2Int>();
-
-            queue.Enqueue(new Vector2Int(startX, startY));
-            visited[startX, startY] = true;
-
-            while (queue.Count > 0)
+            if (layer == AnnotationLayer.Traversable)
+                return traversableTexture;
+            else if (layer == AnnotationLayer.NonTraversable)
+                return nonTraversableTexture;
+            else
             {
-                Vector2Int current = queue.Dequeue();
-                region.Add(current);
+                Debug.LogError("PaintOnMap.GetTargetTexture: Invalid layer specified.");
+                return null;
+            }
+        }
 
-                foreach (Vector2Int neighbor in GetFourConnected(current, tex.width, tex.height))
+        /// <summary>
+        /// Forces the overlay to update its display (marks it dirty).
+        /// </summary>
+        public void UpdateRawImage(AnnotationLayer layer)
+        {
+            RawImage overlay = (layer == AnnotationLayer.Traversable) ? traversableOverlay : nonTraversableOverlay;
+            if (overlay != null)
+                overlay.SetAllDirty();
+        }
+
+        /// <summary>
+        /// Clears the specified layer by creating a new blank (transparent) texture.
+        /// </summary>
+        public void ClearLayer(AnnotationLayer layer)
+        {
+            Texture2D target = GetTargetTexture(layer);
+            if (target == null)
+            {
+                // If texture is null, initialize it.
+                Debug.LogWarning("PaintOnMap.ClearLayer: Target texture is null. Reinitializing texture.");
+                if (layer == AnnotationLayer.Traversable)
+                    InitializeOverlay(ref traversableOverlay, ref traversableTexture, "Traversable");
+                else if (layer == AnnotationLayer.NonTraversable)
+                    InitializeOverlay(ref nonTraversableOverlay, ref nonTraversableTexture, "Non-Traversable");
+                target = GetTargetTexture(layer);
+                if (target == null)
                 {
-                    if (!visited[neighbor.x, neighbor.y])
-                    {
-                        Color sample = tex.GetPixel(neighbor.x, neighbor.y);
-                        if (ColorsSimilar(sample, targetColor, tolerance))
-                        {
-                            visited[neighbor.x, neighbor.y] = true;
-                            queue.Enqueue(neighbor);
-                        }
-                    }
+                    Debug.LogError("PaintOnMap.ClearLayer: Unable to reinitialize texture.");
+                    return;
                 }
             }
-            return region;
+            Color[] pixels = new Color[target.width * target.height];
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = clearColor;
+            target.SetPixels(pixels);
+            target.Apply();
+            UpdateRawImage(layer);
         }
 
         /// <summary>
-        /// Returns 4-connected neighboring pixel coordinates.
+        /// Returns the overlay color (RawImage.color) for the given layer.
         /// </summary>
-        private IEnumerable<Vector2Int> GetFourConnected(Vector2Int coord, int width, int height)
+        public Color GetOverlayColor(AnnotationLayer layer)
         {
-            if (coord.x + 1 < width) yield return new Vector2Int(coord.x + 1, coord.y);
-            if (coord.x - 1 >= 0) yield return new Vector2Int(coord.x - 1, coord.y);
-            if (coord.y + 1 < height) yield return new Vector2Int(coord.x, coord.y + 1);
-            if (coord.y - 1 >= 0) yield return new Vector2Int(coord.x, coord.y - 1);
-        }
-
-        /// <summary>
-        /// Determines whether two colors are similar within a tolerance.
-        /// </summary>
-        private bool ColorsSimilar(Color a, Color b, float tolerance)
-        {
-            float diff = Mathf.Abs(a.r - b.r) + Mathf.Abs(a.g - b.g) + Mathf.Abs(a.b - b.b);
-            return diff <= tolerance;
+            RawImage overlay = (layer == AnnotationLayer.Traversable) ? traversableOverlay : nonTraversableOverlay;
+            if (overlay != null)
+                return overlay.color;
+            Debug.LogWarning($"PaintOnMap: No overlay for layer {layer}; defaulting to white.");
+            return Color.white;
         }
     }
 }
