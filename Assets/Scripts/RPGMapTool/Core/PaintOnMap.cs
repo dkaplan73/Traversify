@@ -7,6 +7,7 @@ namespace RPGMapTool.Core
 {
     /// <summary>
     /// Manages drawing overlays that share the same width, height, position, and aspect ratio as the base map.
+    /// The overlays are realigned each frame so that any zooming or transform changes to the base map are reflected.
     /// Call LoadBaseMap(newBaseMap) once the base map is fully loaded.
     /// </summary>
     public class PaintOnMap : MonoBehaviour
@@ -50,11 +51,11 @@ namespace RPGMapTool.Core
             if (nonTraversableOverlay == null)
                 nonTraversableOverlay = CreateOverlay("NonTraversableOverlay");
 
-            // Initialize overlay textures (fill with clearColor) but keep the set color.
+            // Initialize overlay textures (fill with clearColor) while keeping the set color.
             InitializeOverlay(ref traversableOverlay, ref traversableTexture, "Traversable");
             InitializeOverlay(ref nonTraversableOverlay, ref nonTraversableTexture, "Non-Traversable");
 
-            // Reparent overlays to the same parent as baseMap for a common coordinate space.
+            // Reparent overlays so they share the same parent as the base map.
             traversableOverlay.transform.SetParent(baseMap.transform.parent, false);
             nonTraversableOverlay.transform.SetParent(baseMap.transform.parent, false);
 
@@ -93,7 +94,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Aligns the overlay's RectTransform exactly to the base map.
+        /// Aligns the overlay’s RectTransform exactly to the base map’s RectTransform.
         /// </summary>
         private void AlignOverlay(RawImage overlay)
         {
@@ -114,6 +115,18 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
+        /// In Update, the overlay alignment is refreshed so that any zooming or transform changes are reflected.
+        /// </summary>
+        private void Update()
+        {
+            if (baseMap != null)
+            {
+                AlignOverlay(traversableOverlay);
+                AlignOverlay(nonTraversableOverlay);
+            }
+        }
+
+        /// <summary>
         /// Paints on the specified layer using a circular brush.
         /// The drawing color is taken from the overlay's RawImage color.
         /// </summary>
@@ -125,7 +138,6 @@ namespace RPGMapTool.Core
                 Debug.LogError("PaintOnMap.BrushPaint: Target texture is null.");
                 return;
             }
-            // Use the overlay’s color.
             RawImage targetOverlay = (layer == AnnotationLayer.Traversable) ? traversableOverlay : nonTraversableOverlay;
             Color paintColor = targetOverlay != null ? targetOverlay.color : unusedColor;
             List<Vector2Int> region = GetCircleRegion(center, brushSize, target.width, target.height);
@@ -133,7 +145,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Applies the given paint color to each pixel in the region.
+        /// Applies the provided paint color to all pixels in the region.
         /// </summary>
         public void ApplyPaintRegion(List<Vector2Int> region, Color paintColor, AnnotationLayer layer)
         {
@@ -153,7 +165,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Erases by filling the region with clearColor.
+        /// Erases on the specified layer by filling with clearColor.
         /// </summary>
         public void EraseBrush(Vector2Int center, int eraserSize, AnnotationLayer layer)
         {
@@ -196,7 +208,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Retrieves the texture for the given annotation layer.
+        /// Retrieves the texture for the specified annotation layer.
         /// </summary>
         private Texture2D GetTargetTexture(AnnotationLayer layer)
         {
@@ -212,7 +224,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Marks the overlay as dirty so it refreshes its display.
+        /// Marks the overlay as dirty so that it refreshes its display.
         /// </summary>
         public void UpdateRawImage(AnnotationLayer layer)
         {
@@ -222,7 +234,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Clears the specified layer by reinitializing its texture to be completely transparent.
+        /// Clears the layer by reinitializing its texture to be completely transparent.
         /// </summary>
         public void ClearLayer(AnnotationLayer layer)
         {
@@ -250,7 +262,7 @@ namespace RPGMapTool.Core
         }
 
         /// <summary>
-        /// Returns the overlay color (RawImage.color) for the given layer.
+        /// Returns the overlay color for the given layer.
         /// </summary>
         public Color GetOverlayColor(AnnotationLayer layer)
         {
