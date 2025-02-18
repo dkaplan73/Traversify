@@ -13,9 +13,14 @@ namespace RPGMapTool.Tools
         [Header("Brush Settings")]
         [SerializeField] private float brushSize = 10f;
         [SerializeField, Range(0.1f, 1f)] private float brushOpacity = 1f;
+        
         [Header("UI References")]
         [SerializeField] private Dropdown areaTypeDropdown;
         [SerializeField] private Image colorBackground;
+        
+        [Header("Base Map Options")]
+        [Tooltip("Parent transform holding BaseMapContainer children. The child at the dropdown index provides the brush color.")]
+        [SerializeField] private Transform baseMapContainer;
 
         private PaintManager paintManager;
         private PaintOnMap paintOnMap;
@@ -62,23 +67,57 @@ namespace RPGMapTool.Tools
         }
 
         /// <summary>
-        /// Uses the PaintManager to convert the screen position into texture coordinates, then calls BrushPaint.
+        /// Retrieves the brush color from the selected BaseMapContainer option and uses it for painting.
         /// </summary>
         private void UseBrush(Vector2 screenPosition)
         {
-            if (paintManager == null || paintOnMap == null) return;
-            AnnotationLayer targetLayer = GetTargetLayer();
-            Color overlayColor = paintOnMap.GetOverlayColor(targetLayer);
-            overlayColor.a *= brushOpacity;
+            if (paintManager == null || paintOnMap == null)
+                return;
 
-            // Convert screen point into texture coordinates using PaintManager.
+            // Get brush color from the selected option.
+            Color optionColor = GetColorFromOption();
+            // Update UI color background (if desired).
+            if (colorBackground != null)
+                colorBackground.color = optionColor;
+
+            // Multiply with brush opacity.
+            Color finalColor = optionColor;
+            finalColor.a *= brushOpacity;
+
+            // Convert screen point into texture coordinate.
             Vector2Int texPos = paintManager.ScreenPointToTextureCoords(screenPosition);
-            paintOnMap.BrushPaint(texPos, Mathf.CeilToInt(brushSize), overlayColor, targetLayer);
-            Debug.Log($"PaintBrushTool: Painted at {texPos} with brushSize={brushSize} on layer {targetLayer}.");
+            paintOnMap.BrushPaint(texPos, Mathf.CeilToInt(brushSize), finalColor, GetTargetLayer());
+            Debug.Log($"PaintBrushTool: Painted at {texPos} with brushSize={brushSize} and color {finalColor}.");
         }
 
         /// <summary>
-        /// Retrieves the target annotation layer from the areaTypeDropdown.
+        /// Returns the option color based on the dropdown selection from the BaseMapContainer child.
+        /// </summary>
+        private Color GetColorFromOption()
+        {
+            if (baseMapContainer == null)
+            {
+                Debug.LogWarning("PaintBrushTool: BaseMapContainer reference is missing.");
+                return Color.white;
+            }
+
+            int index = (areaTypeDropdown != null) ? areaTypeDropdown.value : 0;
+            if (index < 0 || index >= baseMapContainer.childCount)
+            {
+                Debug.LogWarning("PaintBrushTool: Dropdown index out of range. Defaulting to white.");
+                return Color.white;
+            }
+            Image optionImage = baseMapContainer.GetChild(index).GetComponent<Image>();
+            if (optionImage == null)
+            {
+                Debug.LogWarning("PaintBrushTool: Option child missing an Image component. Defaulting to white.");
+                return Color.white;
+            }
+            return optionImage.color;
+        }
+
+        /// <summary>
+        /// Returns the annotation layer based on the dropdown value.
         /// </summary>
         private AnnotationLayer GetTargetLayer()
         {
@@ -101,20 +140,6 @@ namespace RPGMapTool.Tools
         {
             brushOpacity = Mathf.Clamp01(opacity);
             Debug.Log($"PaintBrushTool: Brush opacity set to {brushOpacity}");
-        }
-
-        /// <summary>
-        /// Sets the paint color (for UI display) used by the overlay.
-        /// </summary>
-        public void SetPaintColor(Color color)
-        {
-            if (colorBackground != null)
-            {
-                colorBackground.color = color;
-                Debug.Log($"PaintBrushTool: Paint color set to {color}");
-            }
-            else
-                Debug.LogError("PaintBrushTool: Color background not assigned.");
         }
     }
 }
